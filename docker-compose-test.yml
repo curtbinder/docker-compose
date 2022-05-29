@@ -1,0 +1,78 @@
+version: '3'
+
+services:
+  reverse-proxy:
+    image: traefik:v2.6
+    # Enables the web UI and tells traefik to listen to docker
+    command:  
+      - "--api.insecure=true"
+      ## Enables docker support
+      - "--providers.docker=true"
+      ## Changes default to not expose containers
+      - "--providers.docker.exposedbydefault=false"
+      ## Setup the various entry points
+      ## The name after entrypoints is the name used by the containers to reference the entrypoint
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.jellyfin-tcp.address=:8096"
+      - "--entrypoints.jellyfin-udp-1.address=:7539/udp"
+      - "--entrypoints.jellyfin-udp-2.address=:1900/udp"
+    ports:
+      - "80:80"
+      - "8080:8080"
+      - "8096:8096"
+      - "7539:7539/udp"
+      - "1900:1900/udp"
+    volumes:
+      # so traefik can listen to the docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  librespeed:
+    image: lscr.io/linuxserver/librespeed
+    container_name: librespeed
+    environment:
+      - TZ=America/Chicago
+      - MODE=standalone
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.librespeed.rule=Host(`speedtest.localhost`)"
+      - "traefik.http.routers.librespeed.entrypoints=web"
+
+  whoami:
+    image: nginxdemos/hello
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`whoami.localhost`)"
+      - "traefik.http.routers.whoami.entrypoints=web"
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    volumes:
+      - /Users/binder/docker/jellyfin:/config
+      - /Users/binder/media/tv:/data/tv
+      - /Users/binder/media/movies:/data/movies
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jellyfin.rule=Host(`media.localhost`)"
+      - "traefik.http.routers.jellyfin.entrypoints=web"
+      ## TCP ports
+      - "traefik.tcp.routers.jellyfin.entrypoints=jellyfin-tcp"
+      ## if it fails, change to HostSNI(`*`)
+      - "traefik.tcp.routers.jellyfin.rule=HostSNI(`media.localost`)"
+      - "traefik.tcp.routers.jellyfin.service=jellyfin-proxy"
+      - "traefik.tcp.services.jellyfin-proxy.loadbalancer.server.port=8096"
+      ## UDP ports
+      - "traefik.udp.routers.jellyfin-udp.entrypoints=jellyfin-udp-1,jellyfin-udp-2"
+      - "traefik.udp.routers.jellyfin-udp.service=jellyfin-udp-proxy"
+      - "traefik.udp.services.jellyfin-udp-proxy.loadbalancer.server.port=7539,1900"
+
+  nginx:
+    image: lscr.io/linuxserver/nginx
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - /Users/binder/docker/nginx:/config
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nginx.rule=Host(`www.localhost`, `localhost`)"
+      - "traefik.http.routers.nginx.entrypoints=web" 
+
