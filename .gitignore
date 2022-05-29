@@ -1,0 +1,9 @@
+## Ignore all folders and other files in this directory
+## This will allow for only having yaml files
+
+# Ignore everything
+*
+# Allow .gitignore
+!.gitignore
+# Allow yaml files
+!*.yml
