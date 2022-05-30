@@ -1,0 +1,80 @@
+---
+#version: "2.3"
+version: "3"
+services:
+  librespeed:
+    image: lscr.io/linuxserver/librespeed
+    container_name: librespeed
+    ports:
+      - 8008:80
+    environment:
+      - PUID=1000
+      - GUID=1000
+      - TZ=America/Chicago
+      - MODE=standalone
+      - TELEMERY=true
+      - PASSWORD=pizza1
+    restart: unless-stopped
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - GUID=1000
+      - TZ=America/Chicago
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - JELLYFIN_PublishedServerUrl=http://10.0.42.8:8096/
+    #network_mode: "host"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    volumes:
+      - /srv/containers/jellyfin:/config
+      - /srv/htpc/movies:/data/movies
+      - /srv/htpc/tv:/data/tv
+      - /srv/htpc/dvr:/data/recordings
+    ports:
+      - 8096:8096
+      #- 8920:8920 # optional - https webui
+      # optional for client discovery
+      - 7539:7539/udp
+      # optional for service discovery
+      - 1900:1900/udp
+    restart: unless-stopped
+  unifi-controller:
+    #image: ghcr.io/linuxserver/unifi-controller:latest
+    image: ghcr.io/linuxserver/unifi-controller:6.5.55
+    container_name: unifi-controller
+    environment:
+      - PUID=1000
+      - GUID=1000
+      - MEM_LIMIT=1024M # optional, default value set
+    volumes:
+      - /srv/containers/unifi-controller:/config
+    ports:
+      - 3478:3478/udp      # required, Unifi STUN port
+      - 10001:10001/udp    # required, for AP discovery
+      - 8080:8080          # required, for device communication
+      - 8443:8443          # required, Unifi web admin port
+        #- 1900:1900/udp      # optional, 'Make controller discoverable on L2 network'
+        #- 8843:8843          # optional, Unifi guest portal HTTPS redirect port
+        #- 6789:6789          # optional, Mobile throughput test
+        #- 5514:5514          # optional, Remote syslog port
+    restart: unless-stopped
+  nginx:
+    image: lscr.io/linuxserver/nginx
+    container_name: nginx
+    environment:
+      - PUID=1000
+      - GUID=1000
+      - TZ=America/Chicago
+    volumes:
+      - /srv/containers/nginx:/config
+    ports:
+      - 80:80
+      - 443:443
+    restart: unless-stopped
+
