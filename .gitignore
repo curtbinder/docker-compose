@@ -3,7 +3,11 @@
 
 # Ignore everything
 *
-# Allow .gitignore
+
+# Allow specific files
 !.gitignore
+!Readme.md
+!bash_aliases
+
 # Allow yaml files
 !*.yml
