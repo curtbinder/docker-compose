@@ -1,12 +1,31 @@
 ---
-#version: "2.3"
 version: "3"
 services:
+  reverse-proxy:
+    image: traefik:v2.6
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/config/"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.webtls.address=:443"
+        ## uncomment next 2 lines to force all web traffic to https
+        #- "--entrypoints.web.http.redirections.entryPoint.to=webtls"
+        #- "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/containers/site/certs/:/config/
+    restart: unless-stopped
+
   librespeed:
     image: lscr.io/linuxserver/librespeed
     container_name: librespeed
-    ports:
-      - 8008:80
     environment:
       - PUID=1000
       - GUID=1000
@@ -14,7 +33,16 @@ services:
       - MODE=standalone
       - TELEMERY=true
       - PASSWORD=pizza1
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.librespeed.rule=Host(`speedtest.binder.home`)"
+      - "traefik.http.routers.librespeed.entrypoints=web"
     restart: unless-stopped
+
+      ### Not routed by traefik
+      ### set in HOST MODE 
+      ### have to set published URL to be IP address so it works
+      ### with the autodiscovery for jellyfin client apps
   jellyfin:
     image: lscr.io/linuxserver/jellyfin:latest
     container_name: jellyfin
@@ -24,8 +52,10 @@ services:
       - TZ=America/Chicago
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - JELLYFIN_PublishedServerUrl=http://10.0.42.8:8096/
-    #network_mode: "host"
+      - JELLYFIN_PublishedServerUrl=10.0.42.8
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     deploy:
       resources:
         reservations:
@@ -36,45 +66,137 @@ services:
       - /srv/htpc/movies:/data/movies
       - /srv/htpc/tv:/data/tv
       - /srv/htpc/dvr:/data/recordings
-    ports:
-      - 8096:8096
-      #- 8920:8920 # optional - https webui
-      # optional for client discovery
-      - 7539:7539/udp
-      # optional for service discovery
-      - 1900:1900/udp
-    restart: unless-stopped
-  unifi-controller:
-    #image: ghcr.io/linuxserver/unifi-controller:latest
-    image: ghcr.io/linuxserver/unifi-controller:6.5.55
-    container_name: unifi-controller
-    environment:
-      - PUID=1000
-      - GUID=1000
-      - MEM_LIMIT=1024M # optional, default value set
-    volumes:
-      - /srv/containers/unifi-controller:/config
-    ports:
-      - 3478:3478/udp      # required, Unifi STUN port
-      - 10001:10001/udp    # required, for AP discovery
-      - 8080:8080          # required, for device communication
-      - 8443:8443          # required, Unifi web admin port
-        #- 1900:1900/udp      # optional, 'Make controller discoverable on L2 network'
-        #- 8843:8843          # optional, Unifi guest portal HTTPS redirect port
-        #- 6789:6789          # optional, Mobile throughput test
-        #- 5514:5514          # optional, Remote syslog port
-    restart: unless-stopped
-  nginx:
-    image: lscr.io/linuxserver/nginx
-    container_name: nginx
-    environment:
-      - PUID=1000
-      - GUID=1000
-      - TZ=America/Chicago
-    volumes:
-      - /srv/containers/nginx:/config
-    ports:
-      - 80:80
-      - 443:443
+      - /srv/htpc/coding:/data/coding
     restart: unless-stopped
 
+##  nginx:
+##    image: lscr.io/linuxserver/nginx
+##    container_name: nginx
+##    environment:
+##      - PUID=1000
+##      - GUID=1000
+##      - TZ=America/Chicago
+##    volumes:
+##      - /srv/containers/nginx:/config
+##      ## Mount separate folder for WWW content
+##      ##- /srv/containers/site/www:/config/www
+##    labels:
+##      - "traefik.enable=true"
+##      - "traefik.http.routers.nginx-http.entrypoints=web"
+##      - "traefik.http.routers.nginx-http.rule=Host(`www.binder.home`, `binder.home`)"
+##      - "traefik.http.routers.nginx-http.middlewares=nginx-https"
+##      ## Added middleware to redirect only this container (and domains) to https
+##      - "traefik.http.middlewares.nginx-https.redirectscheme.scheme=https"
+##      - "traefik.http.routers.nginx.entrypoints=webtls"
+##      - "traefik.http.routers.nginx.rule=Host(`www.binder.home`, `binder.home`)"
+##      - "traefik.http.routers.nginx.middlewares=nginx-redirect"
+##      ## Redirect base-url to www.base-url
+##      - "traefik.http.middlewares.nginx-redirect.redirectregex.regex=^https://binder.home/(.*)"
+##      - "traefik.http.middlewares.nginx-redirect.redirectregex.replacement=^https://www.binder.home/$${1}"
+##      - "traefik.http.routers.nginx.tls=true"
+##    restart: unless-stopped
+
+  pigallery2:
+    image: bpatrik/pigallery2:latest
+    container_name: pigallery2
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - /srv/containers/pigallery2/config:/app/data/config
+      - /srv/containers/pigallery2/tmp:/app/data/tmp
+      - /srv/pictures:/app/data/images:ro
+      - db-data:/app/data/db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pigallery2.rule=Host(`photos.binder.home`)"
+      - "traefik.http.routers.pigallery2.entrypoints=web"
+    restart: unless-stopped
+
+volumes:
+  db-data:
+
+#### Nextcloud Setup
+##  cloud:
+##    image: lscr.io/linuxserver/nginx
+##    container_name: cloud
+##    environment:
+##      - PUID=1000
+##      - GUID=1000
+##      - TZ=America/Chicago
+##    volumes:
+##      - /srv/containers/cloud:/config
+##    labels:
+##      - "traefik.enable=true"
+##      - "traefik.http.routers.cloud-http.entrypoints=web"
+##      - "traefik.http.routers.cloud-http.rule=Host(`nas.tailfd484.ts.net`)"
+##      - "traefik.http.routers.cloud-http.middlewares=cloud-https"
+##      ## Added middleware to redirect only this container (and domains) to https
+##      - "traefik.http.middlewares.cloud-https.redirectscheme.scheme=https"
+##      - "traefik.http.routers.cloud.entrypoints=webtls"
+##      - "traefik.http.routers.cloud.rule=Host(`nas.tailfd484.ts.net`)"
+##      - "traefik.http.routers.cloud.tls=true"
+##    restart: unless-stopped
+
+##  cloud-db:
+##    image: mariadb:10.3
+##    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+##    container_name: cloud-db
+##    volumes:
+##      - nextcloud-db:/var/lib/mysql
+##    environment:
+##      - MYSQL_ROOT_PASSWORD=wasabi-fetch9-eleven-boundless
+##      - MARIADB_AUTO_UPGRADE=1
+##      - MARIADB_DISABLE_UPGRADE_BACKUP=1
+##    env_file:
+##      - nextcloud-db.env
+##    restart: unless-stopped
+##
+##  cloud-redis:
+##    image: redis:alpine
+##    container_name: cloud-redis
+##    volumes:
+##      - redis:/var/lib/redis
+##    restart: unless-stopped
+##  
+##  nextcloud:
+##    image: nextcloud:latest
+##    container_name: nextcloud
+##    depends_on:
+##      - cloud-db
+##      - cloud-redis
+##    environment:
+##      - MYSQL_HOST=cloud-db
+##      - REDIST_HOST=cloud-redis
+##      # default is 512M 
+##      - PHP_MEMORY_LIMIT=512M
+##      # default is 512M
+##      - PHP_UPLOAD_LIMIT=10G 
+##      - NEXTCLOUD_ADMIN_USER=admin
+##      - NEXTCLOUD_ADMIN_PASSWORD=founder-fedora-recluse6
+##      - NEXTCLOUD_TRUSTED_DOMAINS=nas.tailfd484.ts.net
+##      - OVERWRITEPROTOCOL=https
+##      - TRUSTED_PROXIES=172.18.0.0/16
+##    env_file:
+##      - nextcloud-db.env
+##    volumes:
+##      - nextcloud-www:/var/www/html
+##      - /srv/containers/cloud-data:/var/www/html/data
+##    labels:
+##      - "traefik.enable=true"
+##      - "traefik.http.routers.nextcloud-http.entrypoints=web"
+##      - "traefik.http.routers.nextcloud-http.rule=Host(`nas.tailfd484.ts.net`)"
+##      - "traefik.http.routers.nextcloud-http.middlewares=nextcloud-https"
+##      ## Added middleware to redirect only this container (and domains) to https
+##      - "traefik.http.middlewares.nextcloud-https.redirectscheme.scheme=https"
+##      - "traefik.http.routers.nextcloud.entrypoints=webtls"
+##      - "traefik.http.routers.nextcloud.rule=Host(`nas.tailfd484.ts.net`)"
+##      - "traefik.http.routers.nextcloud.middlewares=nextcloud-redirect"
+##      - "traefik.http.middlewares.nextcloud-redirect.redirectregex.regex=/.well-known/(card|cal)dav"
+##      - "traefik.http.middlewares.nextcloud-redirect.redirectregex.replacement=/remote.php/dav/"
+##      - "traefik.http.routers.nextcloud.tls=true"
+##    restart: unless-stopped
+##
+##volumes:
+##  nextcloud-db:
+##  nextcloud-www:
+##  redis:
